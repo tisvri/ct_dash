@@ -45,116 +45,13 @@ def parse_cell(x):
         return {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in item.items()}
     return None
 
-def cache_valido():
-    files = glob.glob(f"{CACHE_DIR}/*.parquet")
-    if not files:
-        return False
-    mais_antigo = min(os.path.getmtime(f) for f in files)
-    return (time.time() - mais_antigo) < CACHE_TTL_HORAS * 3600
-
-#TODO ── Extração da API ─────────────────────────────────────────────────────────
-def extrair_da_api():
-    url = "https://clinicaltrials.gov/api/v2/studies"
-    params = {
-        "filter.overallStatus": "NOT_YET_RECRUITING|RECRUITING",
-        "pageSize": 1000,
-        "filter.advanced": "AREA[StartDate]RANGE[2020-01-01,MAX]"
-    }
-
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    for f in glob.glob(f"{CACHE_DIR}/*.parquet"):
-        os.remove(f)
-
-    session = requests.Session()
-    page = 1
-    progress = st.progress(0)
-    status_msg = st.empty()
-
-    while True:
-        try:
-            response = session.get(url, params=params, timeout=60)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            
-            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
-                status_msg.warning("Token de paginação expirou. Reiniciando extração...")
-                for f in glob.glob(f"{CACHE_DIR}/*.parquet"):
-                    os.remove(f)
-                params.pop("pageToken", None)
-                page = 1
-                time.sleep(5)
-                continue
-            status_msg.error(f"Erro na requisição: {e}. Tentando novamente em 10s...")
-            time.sleep(10)
-            continue
-
-        data = response.json()
-        studies = data.get("studies", [])
-        if not studies:
-            break
-
-        df = pd.json_normalize(studies)
-        df.to_parquet(f"{CACHE_DIR}/page_{page:04d}.parquet", index=False)
-        status_msg.write(f"Página {page} salva ({len(studies)} estudos)")
-        progress.progress(min(page / 20, 1.0))
-
-        next_page = data.get("nextPageToken")
-        if not next_page:
-            break
-        params["pageToken"] = next_page
-        page += 1
-
-    progress.empty()
-    status_msg.success(f"Extração finalizada — {page} páginas carregadas")
-
 #TODO ── Processamento com cache ─────────────────────────────────────────────────
 @st.cache_data
-def processar_parquets():
-    files = sorted(glob.glob(f"{CACHE_DIR}/*.parquet"))
-    df_final = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+def carregar_dados():
+    return pd.read_parquet("studies.parquet")
 
-    df_final = df_final.rename(columns=map_columns)
-    df_final = df_final[list(map_columns.values())]
-
-    col = 'Intervention/Intervention Type'
-    intervention_df = pd.json_normalize(
-        df_final[col].apply(parse_cell)
-    ).add_prefix('Intervention_')
-
-    df_estudos = pd.concat([df_final.reset_index(drop=True),
-                            intervention_df.reset_index(drop=True)], axis=1)
-    df_estudos = df_estudos.astype(str)
-    df_estudos = df_estudos.drop(columns=[col])
-
-    for date_col in ['Start Date', 'First Posted', 'Completion Date']:
-        df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
-        
-#TODO ── Tratamento da coluna Conditions ───────────────────────────────────────────
-
-    df_estudos['Conditions'] = df_estudos['Conditions'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
-    df_estudos['Conditions'] = df_estudos['Conditions'].str.join(', ')
-    df_estudos['Conditions'] = (df_estudos['Conditions'].str.strip().str.replace(r'\s+', ' ', regex=True).str.title())
-
-#TODO ── Tratamento da coluna Phases ───────────────────────────────────────────
-
-    df_estudos['Phases'] = df_estudos['Phases'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else x)
-    df_estudos['Phases'] = df_estudos['Phases'].str.join(', ')
-
-#TODO ── Tratamento da coluna Start Date e First Posted ───────────────────────────────────────────
-
-    # df_estudos['Start Date'] = pd.to_datetime(df_estudos['Start Date'], errors='coerce')
-    df_estudos['Ano_Inicio'] = df_estudos['Start Date'].dt.year.astype('Int64')
-    df_estudos = df_estudos[df_estudos['Ano_Inicio'] >= 2020]
-    df_estudos['Ano_Posted'] = df_estudos['First Posted'].dt.year.astype('Int64')
-    
-
-    return df_estudos
-
-#TODO ── Ponto de entrada ────────────────────────────────────────────────────────
-if not cache_valido():
-    extrair_da_api()
-
-df_estudos = processar_parquets()
+df_estudos = carregar_dados()
+df_estudos = df_estudos.drop_duplicates(subset="NCT Number")
 df_filtrado = df_estudos.copy()
 
 st.title("_ClinicalTrials.Gov_: Indicadores de Estudos em Andamento", text_alignment="center")

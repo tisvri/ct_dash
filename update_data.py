@@ -1,0 +1,59 @@
+import pandas as pd
+import glob
+import ast
+
+CACHE_DIR = "clinicaltrials_pages"
+
+files = sorted(glob.glob(f"{CACHE_DIR}/*.parquet"))
+df_final = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+
+df_final = df_final.rename(columns=map_columns)
+df_final = df_final[list(map_columns.values())]
+
+col = 'Intervention/Intervention Type'
+
+intervention_df = pd.json_normalize(
+    df_final[col].apply(parse_cell)
+).add_prefix('Intervention_')
+
+df_estudos = pd.concat(
+    [df_final.reset_index(drop=True),
+     intervention_df.reset_index(drop=True)],
+    axis=1
+)
+
+df_estudos = df_estudos.astype(str)
+df_estudos = df_estudos.drop(columns=[col])
+
+for date_col in ['Start Date', 'First Posted', 'Completion Date']:
+    df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
+
+
+# Conditions
+df_estudos['Conditions'] = df_estudos['Conditions'].apply(
+    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+)
+
+df_estudos['Conditions'] = df_estudos['Conditions'].str.join(', ')
+df_estudos['Conditions'] = (
+    df_estudos['Conditions']
+    .str.strip()
+    .str.replace(r'\s+', ' ', regex=True)
+    .str.title()
+)
+
+# Phases
+df_estudos['Phases'] = df_estudos['Phases'].apply(
+    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+)
+
+df_estudos['Phases'] = df_estudos['Phases'].str.join(', ')
+
+# Datas
+df_estudos['Ano_Inicio'] = df_estudos['Start Date'].dt.year.astype('Int64')
+df_estudos = df_estudos[df_estudos['Ano_Inicio'] >= 2020]
+
+df_estudos['Ano_Posted'] = df_estudos['First Posted'].dt.year.astype('Int64')
+
+# salvar dataset final
+df_estudos.to_parquet("studies.parquet", index=False)
