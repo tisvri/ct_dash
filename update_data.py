@@ -26,9 +26,19 @@ map_columns = {
 }
 
 df_final = df_final.rename(columns=map_columns)
-df_final = df_final[list(map_columns.values())]
+df_final = df_final.reindex(columns=map_columns.values())
 
 col = 'Intervention/Intervention Type'
+
+def parse_cell(x):
+    try:
+        if isinstance(x, str):
+            x = ast.literal_eval(x)
+        if isinstance(x, list) and len(x) > 0:
+            return x[0]
+        return {}
+    except:
+        return {}
 
 intervention_df = pd.json_normalize(
     df_final[col].apply(parse_cell)

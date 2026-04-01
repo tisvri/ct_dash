@@ -12,27 +12,24 @@ import re
 #TODO ── Configuração da página ──────────────────────────────────────────────────
 st.set_page_config(page_title="Estudos Abertos no Clinical Trials", layout="wide")
 color_sequence = ['#EC0E73', '#041266', '#00A1E0', '#C830A0', '#61279E']
-st.sidebar.image('Logo svri texto preto.png', width='stretch')
+logo_path = "Logo svri texto preto.png"
 
-#TODO ── Constantes ──────────────────────────────────────────────────────────────
-CACHE_DIR = "clinicaltrials_pages"
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, width='stretch')
+
 CACHE_TTL_HORAS = 12
-
-#TODO ── Helpers ─────────────────────────────────────────────────────────────────
-def parse_cell(x):
-    if isinstance(x, str):
-        x = ast.literal_eval(x)
-    if isinstance(x, (list, np.ndarray)) and len(x) > 0:
-        item = x[0]
-        return {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in item.items()}
-    return None
-
-#TODO ── Processamento com cache ─────────────────────────────────────────────────
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_HORAS * 3600)
 def carregar_dados():
-    return pd.read_parquet("studies.parquet")
+    if os.path.exists("studies.parquet"):
+        return pd.read_parquet("studies.parquet")
+    else:
+        return pd.DataFrame()
 
 df_estudos = carregar_dados()
+if df_estudos.empty:
+    st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
+    st.stop()
+
 df_estudos = df_estudos.drop_duplicates(subset="NCT Number")
 df_filtrado = df_estudos.copy()
 
@@ -44,6 +41,7 @@ Elaboramos este material para auxilio no acesso a indicadores chave de pesquisa 
 Dúvidas ou problemas técnicos, por favor entre em contato com o **Time de BI-SVRI**.
 '''
 st.markdown(multi)
+
 #TODO ── Sidebar: filtros ────────────────────────────────────────────────────────
 with st.sidebar:
     def limpar_filtros():
