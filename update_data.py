@@ -7,6 +7,24 @@ CACHE_DIR = "clinicaltrials_pages"
 files = sorted(glob.glob(f"{CACHE_DIR}/*.parquet"))
 df_final = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
 
+map_columns = {
+    'protocolSection.identificationModule.nctId': 'NCT Number',
+    'protocolSection.identificationModule.officialTitle': 'Study Title',
+    'protocolSection.statusModule.startDateStruct.date': 'Start Date',
+    'protocolSection.statusModule.studyFirstPostDateStruct.date': 'First Posted',
+    'protocolSection.statusModule.primaryCompletionDateStruct.date': 'Completion Date',
+    'protocolSection.sponsorCollaboratorsModule.leadSponsor.name': 'Sponsor',
+    'protocolSection.sponsorCollaboratorsModule.leadSponsor.class': 'Funder Type',
+    'protocolSection.conditionsModule.conditions': 'Conditions',
+    'protocolSection.designModule.studyType': 'Study Type',
+    'protocolSection.designModule.phases': 'Phases',
+    'protocolSection.designModule.enrollmentInfo.count': 'Enrollment',
+    'protocolSection.armsInterventionsModule.interventions': 'Intervention/Intervention Type',
+    'protocolSection.contactsLocationsModule.locations': 'Locations',
+    'protocolSection.sponsorCollaboratorsModule.collaborators': 'Collaborators',
+    'protocolSection.statusModule.overallStatus': 'Study Status'
+}
+
 df_final = df_final.rename(columns=map_columns)
 df_final = df_final[list(map_columns.values())]
 

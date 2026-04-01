@@ -18,24 +18,6 @@ st.sidebar.image('Logo svri texto preto.png', width='stretch')
 CACHE_DIR = "clinicaltrials_pages"
 CACHE_TTL_HORAS = 12
 
-map_columns = {
-    'protocolSection.identificationModule.nctId': 'NCT Number',
-    'protocolSection.identificationModule.officialTitle': 'Study Title',
-    'protocolSection.statusModule.startDateStruct.date': 'Start Date',
-    'protocolSection.statusModule.studyFirstPostDateStruct.date': 'First Posted',
-    'protocolSection.statusModule.primaryCompletionDateStruct.date': 'Completion Date',
-    'protocolSection.sponsorCollaboratorsModule.leadSponsor.name': 'Sponsor',
-    'protocolSection.sponsorCollaboratorsModule.leadSponsor.class': 'Funder Type',
-    'protocolSection.conditionsModule.conditions': 'Conditions',
-    'protocolSection.designModule.studyType': 'Study Type',
-    'protocolSection.designModule.phases': 'Phases',
-    'protocolSection.designModule.enrollmentInfo.count': 'Enrollment',
-    'protocolSection.armsInterventionsModule.interventions': 'Intervention/Intervention Type',
-    'protocolSection.contactsLocationsModule.locations': 'Locations',
-    'protocolSection.sponsorCollaboratorsModule.collaborators': 'Collaborators',
-    'protocolSection.statusModule.overallStatus': 'Study Status'
-}
-
 #TODO ── Helpers ─────────────────────────────────────────────────────────────────
 def parse_cell(x):
     if isinstance(x, str):
