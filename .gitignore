@@ -19,3 +19,7 @@ Thumbs.db
 
 # notebooks
 .ipynb_checkpoints
+
+# arquivos de dados
+*.csv
+*.parquet
