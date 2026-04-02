@@ -9,6 +9,10 @@ import streamlit as st
 import plotly.express as px
 import re
 
+df = pd.read_parquet("studies.parquet")
+st.write(df.head())
+
+
 #TODO ── Configuração da página ──────────────────────────────────────────────────
 st.set_page_config(page_title="Estudos Abertos no Clinical Trials", layout="wide")
 color_sequence = ['#EC0E73', '#041266', '#00A1E0', '#C830A0', '#61279E']
