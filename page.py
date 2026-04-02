@@ -29,7 +29,7 @@ df_estudos = carregar_dados()
 if df_estudos.empty:
     st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
     st.stop()
-st.write(df_estudos.columns())
+st.write("Colunas df_escopo:", df_estudos.columns.tolist())
 df_estudos = df_estudos.drop_duplicates(subset="NCT Number")
 df_filtrado = df_estudos.copy()
 
