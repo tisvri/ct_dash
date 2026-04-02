@@ -160,6 +160,8 @@ df_contagem_fase = (df_escopo.groupby('Phases')['NCT Number'].nunique()
 
 # df_estudos['Start Date'] = pd.to_datetime(df_estudos['Start Date'], errors='coerce')
 # df_estudos['First Posted'] = pd.to_datetime(df_estudos['First Posted'], errors='coerce')
+st.write("Colunas df_escopo:", df_escopo.columns.tolist())
+st.write("Primeiras linhas df_escopo:", df_escopo.head())
 
 df_escopo['Ano_Start'] = df_estudos['Start Date'].dt.year
 df_escopo['Ano_Posted'] = df_estudos['First Posted'].dt.year
@@ -172,8 +174,6 @@ df_start = df_escopo.dropna(subset=['Ano_Start']).groupby('Ano_Start')['NCT Numb
 
 df_posted = df_escopo.dropna(subset=['Ano_Posted']).groupby('Ano_Posted')['NCT Number'].nunique().reset_index(name='num_estudos').sort_values('Ano_Posted')
 
-st.write("Colunas df_escopo:", df_escopo.columns.tolist())
-st.write("Primeiras linhas df_escopo:", df_escopo.head())
 
 #TODO ── Gráficos ────────────────────────────────────────────────────────────────
 
