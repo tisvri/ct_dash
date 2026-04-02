@@ -51,7 +51,7 @@ df_estudos = pd.concat(
 )
 
 df_estudos = df_estudos.astype(str)
-df_estudos = df_estudos.drop(columns=[col])
+# df_estudos = df_estudos.drop(columns=[col])
 
 for date_col in ['Start Date', 'First Posted', 'Completion Date']:
     df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
