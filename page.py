@@ -67,6 +67,8 @@ intervention_df = pd.json_normalize(
     df_estudos[col].apply(parse_cell)
 ).add_prefix('Intervention_')
 
+st.write(intervention_df.columns.tolist())
+
 df_estudos = pd.concat(
     [df_estudos.reset_index(drop=True),
      intervention_df.reset_index(drop=True)],
