@@ -172,6 +172,8 @@ df_start = df_escopo.dropna(subset=['Ano_Start']).groupby('Ano_Start')['NCT Numb
 
 df_posted = df_escopo.dropna(subset=['Ano_Posted']).groupby('Ano_Posted')['NCT Number'].nunique().reset_index(name='num_estudos').sort_values('Ano_Posted')
 
+st.write("Colunas df_escopo:", df_escopo.columns.tolist())
+st.write("Primeiras linhas df_escopo:", df_escopo.head())
 
 #TODO ── Gráficos ────────────────────────────────────────────────────────────────
 
