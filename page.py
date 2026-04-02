@@ -29,7 +29,7 @@ df_estudos = carregar_dados()
 if df_estudos.empty:
     st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
     st.stop()
-
+st.write(df_estudos.columns.tolist())
 map_columns = {
     'protocolSection.identificationModule.nctId': 'NCT Number',
     'protocolSection.identificationModule.officialTitle': 'Study Title',
