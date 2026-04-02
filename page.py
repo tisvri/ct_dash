@@ -162,8 +162,8 @@ df_contagem_fase = (df_escopo.groupby('Phases')['NCT Number'].nunique()
 
 # df_estudos['Start Date'] = pd.to_datetime(df_estudos['Start Date'], errors='coerce')
 # df_estudos['First Posted'] = pd.to_datetime(df_estudos['First Posted'], errors='coerce')
-st.write("Colunas df_estudos:", df_escopo.columns.tolist())
-st.write("Primeiras linhas df_estudos:", df_estudos.head())
+st.write("Colunas df_escopo:", df_escopo.columns.tolist())
+st.write("Primeiras linhas df_escopo:", df_escopo.head())
 
 df_escopo['Ano_Start'] = df_estudos['Start Date'].dt.year
 df_escopo['Ano_Posted'] = df_estudos['First Posted'].dt.year
