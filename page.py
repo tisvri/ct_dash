@@ -25,11 +25,14 @@ def carregar_dados():
     else:
         return pd.DataFrame()
 
-df_estudos = carregar_dados()
-if df_estudos.empty:
+df_estudo = carregar_dados()
+if df_estudo.empty:
     st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
     st.stop()
-st.write(df_estudos.columns.tolist())
+
+st.write(df_estudo.columns.tolist())
+
+
 map_columns = {
     'protocolSection.identificationModule.nctId': 'NCT Number',
     'protocolSection.identificationModule.officialTitle': 'Study Title',
@@ -48,7 +51,7 @@ map_columns = {
     'protocolSection.statusModule.overallStatus': 'Study Status'
 }
 
-df_estudos = df_estudos.rename(columns=map_columns)
+df_estudos = df_estudo.rename(columns=map_columns)
 df_estudos = df_estudos.reindex(columns=map_columns.values())
 
 col = 'Intervention/ Intervention Type'
