@@ -19,7 +19,7 @@ map_columns = {
     'protocolSection.designModule.studyType': 'Study Type',
     'protocolSection.designModule.phases': 'Phases',
     'protocolSection.designModule.enrollmentInfo.count': 'Enrollment',
-    'protocolSection.armsInterventionsModule.interventions': 'Intervention Type',
+    # 'protocolSection.armsInterventionsModule.interventions': 'Intervention/ Intervention Type',
     'protocolSection.contactsLocationsModule.locations': 'Locations',
     'protocolSection.sponsorCollaboratorsModule.collaborators': 'Collaborators',
     'protocolSection.statusModule.overallStatus': 'Study Status'
