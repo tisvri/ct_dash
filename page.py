@@ -125,6 +125,8 @@ with st.sidebar:
         (df_filtrado['Ano_Posted'].between(ano_posted_min, ano_posted_max))
     ]
 
+df_escopo= df_filtrado
+
 #TODO ── Escopo Mundo / Brasil ───────────────────────────────────────────────────
 escopo = st.radio(
     "**Estudos:**", ["🌍 Mundo", "🇧🇷 Brasil"],
