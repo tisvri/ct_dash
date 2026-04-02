@@ -26,7 +26,9 @@ map_columns = {
 }
 
 df_final = df_final.rename(columns=map_columns)
-df_final = df_final.reindex(columns=map_columns.values())
+
+cols_existentes = [c for c in map_columns.values() if c in df_final.columns]
+df_final = df_final[cols_existentes]
 
 col = 'Intervention Type'
 
