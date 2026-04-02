@@ -1,12 +1,12 @@
-import requests
-import pandas as pd
+import requests # type: ignore
+import pandas as pd # type: ignore
 import time
 import os
 import glob
-import numpy as np
+import numpy as np # type: ignore
 import ast
-import streamlit as st
-import plotly.express as px
+import streamlit as st # type: ignore
+import plotly.express as px # type: ignore
 import re
 
 #TODO ── Configuração da página ──────────────────────────────────────────────────

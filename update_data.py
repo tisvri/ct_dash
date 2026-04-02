@@ -1,4 +1,4 @@
-import pandas as pd
+import pandas as pd # type: ignore
 import glob
 import ast
 
@@ -27,32 +27,32 @@ map_columns = {
 
 df_final = df_final.rename(columns=map_columns)
 
-cols_existentes = [c for c in map_columns.values() if c in df_final.columns]
-df_final = df_final[cols_existentes]
+df_estudos = df_final.rename(columns=map_columns)
+df_estudos = df_final.reindex(columns=map_columns.values())
 
-col = 'Intervention Type'
+# col = 'Intervention Type'
 
-def parse_cell(x):
-    try:
-        if isinstance(x, str):
-            x = ast.literal_eval(x)
-        if isinstance(x, list) and len(x) > 0:
-            return x[0]
-        return {}
-    except:
-        return {}
+# def parse_cell(x):
+#     try:
+#         if isinstance(x, str):
+#             x = ast.literal_eval(x)
+#         if isinstance(x, list) and len(x) > 0:
+#             return x[0]
+#         return {}
+#     except:
+#         return {}
 
-intervention_df = pd.json_normalize(
-    df_final[col].apply(parse_cell)
-).add_prefix('Intervention_')
+# intervention_df = pd.json_normalize(
+#     df_final[col].apply(parse_cell)
+# ).add_prefix('Intervention_')
 
-df_estudos = pd.concat(
-    [df_final.reset_index(drop=True),
-     intervention_df.reset_index(drop=True)],
-    axis=1
-)
-# df_estudos = df_estudos.astype(str)
-# df_estudos = df_estudos.drop(columns=['Intervention/Intervention Type'])
+# df_estudos = pd.concat(
+#     [df_final.reset_index(drop=True),
+#      intervention_df.reset_index(drop=True)],
+#     axis=1
+# )
+# # df_estudos = df_estudos.astype(str)
+# # df_estudos = df_estudos.drop(columns=['Intervention/Intervention Type'])
 
 for date_col in ['Start Date', 'First Posted', 'Completion Date']:
     df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
