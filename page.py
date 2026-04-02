@@ -29,7 +29,7 @@ df_estudos = carregar_dados()
 if df_estudos.empty:
     st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
     st.stop()
-
+st.write(df_estudos.columns.tolist())
 df_estudos = df_estudos.drop_duplicates(subset="NCT Number")
 df_filtrado = df_estudos.copy()
 
@@ -124,8 +124,6 @@ with st.sidebar:
         (df_filtrado['Ano_Inicio'].between(ano_inicio_min, ano_inicio_max)) &
         (df_filtrado['Ano_Posted'].between(ano_posted_min, ano_posted_max))
     ]
-
-df_escopo= df_filtrado
 
 #TODO ── Escopo Mundo / Brasil ───────────────────────────────────────────────────
 escopo = st.radio(

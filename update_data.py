@@ -57,7 +57,7 @@ for date_col in ['Start Date', 'First Posted', 'Completion Date']:
     df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
 
 
-# Conditions
+# Tratamento e modelagem da coluna Conditions
 df_estudos['Conditions'] = df_estudos['Conditions'].apply(
     lambda x: ast.literal_eval(x) if isinstance(x, str) else x
 )
@@ -70,17 +70,16 @@ df_estudos['Conditions'] = (
     .str.title()
 )
 
-# Phases
+# Tratamento e modelagem da coluna Phases
 df_estudos['Phases'] = df_estudos['Phases'].apply(
     lambda x: ast.literal_eval(x) if isinstance(x, str) else x
 )
 
 df_estudos['Phases'] = df_estudos['Phases'].str.join(', ')
 
-# Datas
+# Tratamento e modelagem das colunas com datas para este formato.
 df_estudos['Ano_Inicio'] = df_estudos['Start Date'].dt.year.astype('Int64')
 df_estudos = df_estudos[df_estudos['Ano_Inicio'] >= 2020]
-
 df_estudos['Ano_Posted'] = df_estudos['First Posted'].dt.year.astype('Int64')
 
 # salvar dataset final
