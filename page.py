@@ -81,7 +81,7 @@ def parse_cell(x):
         return {}
 
 intervention_df = pd.json_normalize(
-    df_final[col].apply(parse_cell)
+    df_estudos[col].apply(parse_cell)
 ).add_prefix('Intervention_')
 
 df_estudos = pd.concat(
