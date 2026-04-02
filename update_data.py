@@ -19,7 +19,7 @@ map_columns = {
     'protocolSection.designModule.studyType': 'Study Type',
     'protocolSection.designModule.phases': 'Phases',
     'protocolSection.designModule.enrollmentInfo.count': 'Enrollment',
-    'protocolSection.armsInterventionsModule.interventions': 'Intervention/Intervention Type',
+    'protocolSection.armsInterventionsModule.interventions': 'Intervention Type',
     'protocolSection.contactsLocationsModule.locations': 'Locations',
     'protocolSection.sponsorCollaboratorsModule.collaborators': 'Collaborators',
     'protocolSection.statusModule.overallStatus': 'Study Status'
@@ -28,7 +28,7 @@ map_columns = {
 df_final = df_final.rename(columns=map_columns)
 df_final = df_final.reindex(columns=map_columns.values())
 
-col = 'Intervention/Intervention Type'
+col = 'Intervention Type'
 
 def parse_cell(x):
     try:
