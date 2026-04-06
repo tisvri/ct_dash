@@ -25,7 +25,4 @@ columns_to_select = [
     'protocolSection.statusModule.overallStatus'
 ]
 
-df_estudos = df_final.reindex(columns=columns_to_select.values())
-
-# salvar dataset final
-df_estudos.to_parquet("studies.parquet", index=False)
+df_estudos = df_final.to_parquet("studies.parquet", index=False)

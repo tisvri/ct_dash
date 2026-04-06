@@ -32,7 +32,6 @@ if df_estudo.empty:
 
 st.write(df_estudo.columns.tolist())
 
-
 map_columns = {
     'protocolSection.identificationModule.nctId': 'NCT Number',
     'protocolSection.identificationModule.officialTitle': 'Study Title',
