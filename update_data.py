@@ -5,7 +5,11 @@ import ast
 CACHE_DIR = "clinicaltrials_pages"
 
 files = sorted(glob.glob(f"{CACHE_DIR}/*.parquet"))
-df_final = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+
+if files:
+    df_final = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+else:
+    df_final = pd.DataFrame()
 
 columns_to_select = [
     'protocolSection.identificationModule.nctId',
@@ -24,5 +28,7 @@ columns_to_select = [
     'protocolSection.sponsorCollaboratorsModule.collaborators',
     'protocolSection.statusModule.overallStatus'
 ]
+
+df_estudos = df_final.reindex(columns=columns_to_select)
 
 df_estudos = df_final.to_parquet("studies.parquet", index=False)
