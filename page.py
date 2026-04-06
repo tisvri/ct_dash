@@ -51,16 +51,21 @@ map_columns = {
 }
 
 df_estudos = df_estudo.rename(columns=map_columns)
-df_estudos = df_estudos.reindex(columns=map_columns)
+df_estudos = df_estudos.reindex(columns=map_columns.keys())
 
 col = 'Intervention/ Intervention Type'
 
 def parse_cell(x):
     try:
+        if pd.isna(x):
+            return {}
+
         if isinstance(x, str):
             x = ast.literal_eval(x)
+
         if isinstance(x, list) and len(x) > 0:
             return x[0]
+
         return {}
     except:
         return {}
@@ -84,9 +89,13 @@ for date_col in ['Start Date', 'First Posted', 'Completion Date']:
 df_estudos['Conditions'] = df_estudos['Conditions'].apply(
     lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
 )
-df_estudos['Conditions'] = df_estudos['Conditions'].str.join(', ')
+
+df_estudos['Conditions'] = df_estudos['Conditions'].apply(
+    lambda x: ', '.join(x) if isinstance(x, list) else x
+)
 df_estudos['Conditions'] = (
     df_estudos['Conditions']
+    .astype(str)
     .str.strip()
     .str.replace(r'\s+', ' ', regex=True)
     .str.title()
