@@ -51,7 +51,7 @@ map_columns = {
 }
 
 df_estudos = df_estudo.rename(columns=map_columns)
-df_estudos = df_estudos.reindex(columns=map_columns.values())
+df_estudos = df_estudos.reindex(columns=map_columns)
 
 col = 'Intervention/ Intervention Type'
 
