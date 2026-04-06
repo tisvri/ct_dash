@@ -1,9 +1,9 @@
-import requests # type: ignore
+# import requests # type: ignore
 import pandas as pd # type: ignore
-import time
+# import time
 import os
-import glob
-import numpy as np # type: ignore
+# import glob
+# import numpy as np # type: ignore
 import ast
 import streamlit as st # type: ignore
 import plotly.express as px # type: ignore
@@ -21,9 +21,11 @@ CACHE_TTL_HORAS = 12
 @st.cache_data(ttl=CACHE_TTL_HORAS * 3600)
 def carregar_dados():
     if os.path.exists("studies.parquet"):
-        return pd.read_parquet("studies.parquet")
-    else:
-        return pd.DataFrame()
+        return pd.read_parquet(
+            "studies.parquet",
+            columns=list(map_columns.keys())
+        )
+    return pd.DataFrame()
 
 df_estudo = carregar_dados()
 if df_estudo.empty:
@@ -50,8 +52,11 @@ map_columns = {
     'protocolSection.statusModule.overallStatus': 'Study Status'
 }
 
+# df_estudos = df_estudo.rename(columns=map_columns)
+# df_estudos = df_estudos.reindex(columns=map_columns.keys())
 df_estudos = df_estudo.rename(columns=map_columns)
-df_estudos = df_estudos.reindex(columns=map_columns.keys())
+df_estudos = df_estudos.reindex(columns=map_columns.values())
+
 
 col = 'Intervention/ Intervention Type'
 
@@ -238,7 +243,7 @@ df_top10_comorbidade = (df_escopo.groupby('Conditions')['NCT Number'].nunique()
 df_contagem_fase = (df_escopo.groupby('Phases')['NCT Number'].nunique()
                     .reset_index(name='num_estudos'))
 
-# FIX: usar df_escopo em vez de df_estudos
+
 df_escopo['Ano_Start'] = df_escopo['Start Date'].dt.year
 df_escopo['Ano_Posted'] = df_escopo['First Posted'].dt.year
 
