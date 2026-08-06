@@ -21,6 +21,6 @@ Thumbs.db
 .ipynb_checkpoints
 
 # arquivos de dados
-*.csv
+clinicaltrials_pages/
 *.parquet
 !studies.parquet
