@@ -99,9 +99,7 @@ df_estudos['Phases'] = df_estudos['Phases'].apply(
     lambda x: ', '.join(x) if isinstance(x, list) else str(x) if x else None
 )
 
-# ── NOVO: Classificação por Área Terapêutica (via palavras-chave em Conditions) ─
-# Mapeamento de área terapêutica -> lista de palavras-chave (em inglês, pois
-# 'Conditions' vem originalmente da API do ClinicalTrials.gov em inglês).
+#Classificação por Área Terapêutica 
 AREA_TERAPEUTICA_KEYWORDS = {
     'Oncologia': ['cancer', 'tumor', 'tumour', 'carcinoma', 'lymphoma', 'leukemia',
                   'leukaemia', 'melanoma', 'sarcoma', 'neoplasm', 'oncolog', 'metastatic'],
@@ -191,7 +189,7 @@ with st.sidebar:
         key="filtro_condicao"
     )
 
-    # NOVO: Filtro por Área Terapêutica
+    #Filtro por Área Terapêutica
     lista_areas = sorted({
         area.strip()
         for celula in df_estudos['Área Terapêutica'].dropna()
@@ -248,7 +246,7 @@ with st.sidebar:
         pattern = '|'.join(map(re.escape, condicao))
         df_filtrado = df_filtrado[df_filtrado['Conditions'].str.contains(pattern, case=False, na=False)]
 
-    # NOVO: aplica filtro de Área Terapêutica
+    #Área Terapêutica
     if area_terapeutica:
         pattern = '|'.join(map(re.escape, area_terapeutica))
         df_filtrado = df_filtrado[df_filtrado['Área Terapêutica'].str.contains(pattern, case=False, na=False)]
@@ -305,30 +303,35 @@ df_intervention = (df_escopo.groupby('Intervention_type')['NCT Number'].nunique(
                    .reset_index(name='num_estudos')
                    .sort_values('num_estudos', ascending=False))
 
-# ── NOVO: Linhas de tendência Mundo x Brasil ────────────────────────────────
-# Constrói a base (Mundo) e o recorte Brasil a partir de df_filtrado, isto é,
-# ANTES da divisão pelo radio "Estudos: Mundo/Brasil" — assim as duas linhas
-# aparecem juntas no mesmo gráfico, independente da opção selecionada acima.
-df_brasil_base = df_filtrado[df_filtrado['Locations'].str.contains(
-    r"\b(?:brazil|brasil)\b", case=False, na=False)]
+def contagem_por_ano(df, coluna_data, nome_coluna_ano):
+    if df.empty:
+        return pd.DataFrame(columns=[nome_coluna_ano, 'num_estudos'])
+    tmp = df.dropna(subset=[coluna_data]).assign(
+        **{nome_coluna_ano: df[coluna_data].dt.year}
+    )
+    return (tmp.groupby(nome_coluna_ano)['NCT Number'].nunique()
+            .reset_index(name='num_estudos')
+            .sort_values(nome_coluna_ano))
 
-def montar_tendencia(coluna_data, nome_coluna_ano):
-    mundo = (df_filtrado.dropna(subset=[coluna_data])
-             .assign(**{nome_coluna_ano: df_filtrado[coluna_data].dt.year})
-             .groupby(nome_coluna_ano)['NCT Number'].nunique()
-             .reset_index(name='num_estudos'))
-    mundo['Escopo'] = 'Mundo'
+if escopo == "🌍 Mundo":
+    df_brasil_escopo = df_escopo[df_escopo['Locations'].str.contains(
+        r"\b(?:brazil|brasil)\b", case=False, na=False)]
 
-    brasil = (df_brasil_base.dropna(subset=[coluna_data])
-              .assign(**{nome_coluna_ano: df_brasil_base[coluna_data].dt.year})
-              .groupby(nome_coluna_ano)['NCT Number'].nunique()
-              .reset_index(name='num_estudos'))
-    brasil['Escopo'] = 'Brasil'
-
-    return pd.concat([mundo, brasil], ignore_index=True).sort_values(nome_coluna_ano)
-
-df_tendencia_start = montar_tendencia('Start Date', 'Ano_Start')
-df_tendencia_posted = montar_tendencia('First Posted', 'Ano_Posted')
+    df_tendencia_start = pd.concat([
+        contagem_por_ano(df_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Mundo'),
+        contagem_por_ano(df_brasil_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Brasil'),
+    ], ignore_index=True)
+    df_tendencia_posted = pd.concat([
+        contagem_por_ano(df_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Mundo'),
+        contagem_por_ano(df_brasil_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Brasil'),
+    ], ignore_index=True)
+    titulo_start = 'Estudos por Ano de Início — Mundo x Brasil'
+    titulo_posted = 'Estudos por Ano de Publicação — Mundo x Brasil'
+else:
+    df_tendencia_start = contagem_por_ano(df_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Brasil')
+    df_tendencia_posted = contagem_por_ano(df_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Brasil')
+    titulo_start = 'Estudos por Ano de Início — Brasil'
+    titulo_posted = 'Estudos por Ano de Publicação — Brasil'
 
 # ── Gráficos ────────────────────────────────────────────────────────────────
 fig_start = px.line(
@@ -339,7 +342,7 @@ fig_start = px.line(
 fig_start.update_traces(textposition='top center')
 fig_start.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8,
     uniformtext_mode='hide', xaxis={'dtick': 1}, legend_title_text='')
-st.subheader('Estudos por Ano de Início — Mundo x Brasil')
+st.subheader(titulo_start)
 st.plotly_chart(fig_start, use_container_width=True)
 
 fig_posted = px.line(
@@ -350,7 +353,7 @@ fig_posted = px.line(
 fig_posted.update_traces(textposition='top center')
 fig_posted.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8,
     uniformtext_mode='hide', xaxis={'dtick': 1}, legend_title_text='')
-st.subheader('Estudos por Ano de Publicação — Mundo x Brasil')
+st.subheader(titulo_posted)
 st.plotly_chart(fig_posted, use_container_width=True)
 
 ful1, ful2 = st.columns([1, 1])
