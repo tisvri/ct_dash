@@ -1,246 +1,484 @@
-# import pandas as pd
-# import glob
-
-# CACHE_DIR = "clinicaltrials_pages"
-
-# print("Procurando arquivos parquet...")
-
-# files = sorted(glob.glob(f"{CACHE_DIR}/*.parquet"))
-
-# if not files:
-#     print("Nenhum arquivo encontrado.")
-#     df_final = pd.DataFrame()
-# else:
-#     print(f"{len(files)} arquivos encontrados.")
-
-#     df_final = pd.concat(
-#         (pd.read_parquet(f) for f in files),
-#         ignore_index=True
-#     )
-
-# print("Total de registros:", len(df_final))
-
-# # ── Colunas necessárias para o dashboard ─────────────────────
-# columns_to_select = [
-#     'protocolSection.identificationModule.nctId',
-#     'protocolSection.identificationModule.officialTitle',
-#     'protocolSection.statusModule.startDateStruct.date',
-#     'protocolSection.statusModule.studyFirstPostDateStruct.date',
-#     'protocolSection.statusModule.primaryCompletionDateStruct.date',
-#     'protocolSection.sponsorCollaboratorsModule.leadSponsor.name',
-#     'protocolSection.sponsorCollaboratorsModule.leadSponsor.class',
-#     'protocolSection.conditionsModule.conditions',
-#     'protocolSection.designModule.studyType',
-#     'protocolSection.designModule.phases',
-#     'protocolSection.designModule.enrollmentInfo.count',
-#     'protocolSection.armsInterventionsModule.interventions',
-#     'protocolSection.contactsLocationsModule.locations',
-#     'protocolSection.sponsorCollaboratorsModule.collaborators',
-#     'protocolSection.statusModule.overallStatus'
-# ]
-
-# # ── Seleciona apenas colunas necessárias ─────────────────────
-# df_estudos = df_final.reindex(columns=columns_to_select)
-
-# # ── Remove duplicatas (muito comum na API) ───────────────────
-# df_estudos = df_estudos.drop_duplicates()
-
-# # ── Otimiza tipo numérico ───────────────────────────────────
-# df_estudos['protocolSection.designModule.enrollmentInfo.count'] = pd.to_numeric(
-#     df_estudos['protocolSection.designModule.enrollmentInfo.count'],
-#     errors='coerce'
-# ).astype('float32')
-
-# # ── Salva dataset final ─────────────────────────────────────
-# output_file = "studies.parquet"
-
-# df_estudos.to_parquet(
-#     output_file,
-#     index=False,
-#     compression="brotli"
-# )
-
-# # ── Informações finais ──────────────────────────────────────
-# size_mb = round(df_estudos.memory_usage(deep=True).sum() / 1024**2, 2)
-
-# print("Arquivo gerado:", output_file)
-# print("Linhas:", len(df_estudos))
-# print("Tamanho estimado:", size_mb, "MB")
-
-import requests
 import pandas as pd
-import time
+import ast
+import streamlit as st
+import plotly.express as px
+import re
 import os
 
-# ── Configurações da API ────────────────────────────────────────────────────
-BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
+# ── Configuração da página ──────────────────────────────────────────────────
+st.set_page_config(page_title="Estudos Abertos no Clinical Trials", layout="wide")
+color_sequence = ['#EC0E73', '#041266', '#00A1E0', '#C830A0', '#61279E']
+logo_path = "Logo svri texto preto.png"
 
-FIELDS = [
-    "protocolSection.identificationModule.nctId",
-    "protocolSection.identificationModule.officialTitle",
-    "protocolSection.statusModule.startDateStruct.date",
-    "protocolSection.statusModule.studyFirstPostDateStruct.date",
-    "protocolSection.statusModule.primaryCompletionDateStruct.date",
-    "protocolSection.sponsorCollaboratorsModule.leadSponsor.name",
-    "protocolSection.sponsorCollaboratorsModule.leadSponsor.class",
-    "protocolSection.conditionsModule.conditions",
-    "protocolSection.designModule.studyType",
-    "protocolSection.designModule.phases",
-    "protocolSection.designModule.enrollmentInfo.count",
-    "protocolSection.armsInterventionsModule.interventions",
-    "protocolSection.contactsLocationsModule.locations",
-    "protocolSection.sponsorCollaboratorsModule.collaborators",
-    "protocolSection.statusModule.overallStatus",
-]
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, width=200)
 
-# Busca estudos com esses status
-STATUS_FILTER = ["NOT_YET_RECRUITING", "RECRUITING"]
+# ── Mapeamento de colunas (definido antes de ser usado) ─────────────────────
+map_columns = {
+    'protocolSection.identificationModule.nctId': 'NCT Number',
+    'protocolSection.identificationModule.officialTitle': 'Study Title',
+    'protocolSection.statusModule.startDateStruct.date': 'Start Date',
+    'protocolSection.statusModule.studyFirstPostDateStruct.date': 'First Posted',
+    'protocolSection.statusModule.primaryCompletionDateStruct.date': 'Completion Date',
+    'protocolSection.sponsorCollaboratorsModule.leadSponsor.name': 'Sponsor',
+    'protocolSection.sponsorCollaboratorsModule.leadSponsor.class': 'Funder Type',
+    'protocolSection.conditionsModule.conditions': 'Conditions',
+    'protocolSection.designModule.studyType': 'Study Type',
+    'protocolSection.designModule.phases': 'Phases',
+    'protocolSection.designModule.enrollmentInfo.count': 'Enrollment',
+    'protocolSection.armsInterventionsModule.interventions': 'Intervention/ Intervention Type',
+    'protocolSection.contactsLocationsModule.locations': 'Locations',
+    'protocolSection.sponsorCollaboratorsModule.collaborators': 'Collaborators',
+    'protocolSection.statusModule.overallStatus': 'Study Status'
+}
 
-PAGE_SIZE = 1000
-OUTPUT_FILE = "studies.parquet"
+CACHE_TTL_HORAS = 12
+
+@st.cache_data(ttl=CACHE_TTL_HORAS * 3600)
+def carregar_dados():
+    if os.path.exists("studies.parquet"):
+        return pd.read_parquet("studies.parquet", columns=list(map_columns.keys()))
+    return pd.DataFrame()
+
+# ── Mapeamento de Área Terapêutica (fora da função cacheada, é estático) ────
+# 'Conditions' vem originalmente em inglês da API do ClinicalTrials.gov.
+AREA_TERAPEUTICA_KEYWORDS = {
+    'Oncologia': ['cancer', 'tumor', 'tumour', 'carcinoma', 'lymphoma', 'leukemia',
+                  'leukaemia', 'melanoma', 'sarcoma', 'neoplasm', 'oncolog', 'metastatic'],
+    'Cardiologia': ['heart', 'cardiac', 'cardiovascular', 'hypertension', 'arrhythmia',
+                     'coronary', 'atrial fibrillation', 'myocardial', 'heart failure'],
+    'Endocrinologia E Metabolismo': ['diabetes', 'thyroid', 'obesity', 'metabolic syndrome',
+                                       'hypoglycemia', 'hyperglycemia', 'insulin'],
+    'Neurologia': ['alzheimer', 'parkinson', 'epilepsy', 'stroke', 'multiple sclerosis',
+                    'migraine', 'dementia', 'neuropathy', 'seizure'],
+    'Psiquiatria E Saúde Mental': ['depress', 'anxiety', 'schizophrenia', 'bipolar',
+                                     'ptsd', 'psychiatric', 'mental health', 'substance use'],
+    'Doenças Infecciosas': ['infection', 'hiv', 'aids', 'hepatitis', 'tuberculosis',
+                              'covid', 'sars-cov', 'malaria', 'influenza', 'sepsis'],
+    'Doenças Respiratórias': ['asthma', 'copd', 'pulmonary', 'respiratory', 'lung disease',
+                                'bronch'],
+    'Gastroenterologia': ['crohn', 'colitis', 'liver', 'hepatic', 'gastrointestinal',
+                            'ibd', 'pancreat', 'cirrhosis'],
+    'Nefrologia E Urologia': ['kidney', 'renal', 'urinary', 'bladder', 'prostate'],
+    'Reumatologia E Imunologia': ['arthritis', 'lupus', 'autoimmune', 'rheumatoid',
+                                    'psoriatic arthritis'],
+    'Dermatologia': ['skin', 'psoriasis', 'dermatitis', 'eczema'],
+    'Hematologia': ['anemia', 'anaemia', 'hemophilia', 'haemophilia', 'coagulation',
+                      'thrombosis', 'blood disorder'],
+    'Oftalmologia': ['eye', 'ocular', 'retina', 'glaucoma', 'macular'],
+    'Ginecologia E Obstetrícia': ['pregnancy', 'ovarian', 'endometriosis', 'menopause',
+                                    'uterine'],
+    'Pediatria': ['pediatric', 'paediatric', 'infant', 'newborn', 'neonatal'],
+    'Doenças Raras E Genéticas': ['rare disease', 'genetic', 'syndrome'],
+}
+
+def classificar_area_terapeutica(conditions_str):
+    """Classifica um estudo em uma ou mais Áreas Terapêuticas com base em
+    palavras-chave presentes na coluna 'Conditions'."""
+    if pd.isna(conditions_str) or not str(conditions_str).strip():
+        return 'Não Classificado'
+    texto = str(conditions_str).lower()
+    areas_encontradas = []
+    for area, keywords in AREA_TERAPEUTICA_KEYWORDS.items():
+        if any(kw in texto for kw in keywords):
+            areas_encontradas.append(area)
+    if not areas_encontradas:
+        return 'Outras'
+    return ', '.join(areas_encontradas)
 
 
-def fetch_all_studies():
-    """Busca todos os estudos da API do ClinicalTrials.gov paginando automaticamente."""
-    all_studies = []
-    next_page_token = None
-    page = 1
+# ── NOVO: todo o pipeline pesado agora é cacheado ───────────────────────────
+# Antes, esse tratamento (parse de listas, regex, classificação por
+# palavras-chave) rodava do ZERO a cada clique em qualquer filtro, já que o
+# Streamlit reexecuta o script inteiro a cada interação. Isso gerava picos de
+# memória e foi a causa mais provável do "resource limit" do Community Cloud.
+# Agora ele roda só uma vez (ou quando o cache expira / o parquet muda) e o
+# resultado fica guardado; cliques em filtro só filtram o DataFrame já pronto.
+@st.cache_data(ttl=CACHE_TTL_HORAS * 3600, show_spinner="Preparando dados...")
+def preparar_dados(df_estudo: pd.DataFrame) -> pd.DataFrame:
+    df = df_estudo.rename(columns=map_columns)
+    df = df.reindex(columns=list(map_columns.values()))
 
-    status_query = "|".join(STATUS_FILTER)
+    # Normaliza coluna de intervenção
+    col_interv = 'Intervention/ Intervention Type'
 
-    while True:
-        print(f"  Buscando página {page}...")
-
-        params = {
-            "format": "json",
-            "pageSize": PAGE_SIZE,
-            "fields": ",".join(FIELDS),
-            "filter.overallStatus": status_query,
-        }
-
-        if next_page_token:
-            params["pageToken"] = next_page_token
-
+    def parse_cell(x):
         try:
-            response = requests.get(BASE_URL, params=params, timeout=60)
-            response.raise_for_status()
-            data = response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"  Erro na requisição (página {page}): {e}")
-            print("  Tentando novamente em 10 segundos...")
-            time.sleep(10)
-            continue
+            if pd.isna(x):
+                return {}
+            if isinstance(x, str):
+                x = ast.literal_eval(x)
+            if isinstance(x, list) and len(x) > 0:
+                return x[0]
+            return {}
+        except Exception:
+            return {}
 
-        studies = data.get("studies", [])
-        all_studies.extend(studies)
-        print(f"  {len(studies)} estudos recebidos | Total acumulado: {len(all_studies)}")
+    intervention_df = pd.json_normalize(
+        df[col_interv].apply(parse_cell)
+    ).add_prefix('Intervention_')
 
-        next_page_token = data.get("nextPageToken")
-        if not next_page_token:
-            print("  Última página alcançada.")
-            break
+    df = pd.concat(
+        [df.reset_index(drop=True), intervention_df.reset_index(drop=True)],
+        axis=1
+    )
+    del intervention_df
 
-        page += 1
-        time.sleep(0.3)  # Respeita rate limit da API
+    # Datas
+    for date_col in ['Start Date', 'First Posted', 'Completion Date']:
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
 
-    return all_studies
+    # Conditions
+    df['Conditions'] = df['Conditions'].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
+    )
+    df['Conditions'] = df['Conditions'].apply(
+        lambda x: ', '.join(x) if isinstance(x, list) else x
+    )
+    df['Conditions'] = (
+        df['Conditions']
+        .astype(str)
+        .str.strip()
+        .str.replace(r'\s+', ' ', regex=True)
+        .str.title()
+    )
+
+    # Phases
+    df['Phases'] = df['Phases'].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
+    )
+    df['Phases'] = df['Phases'].apply(
+        lambda x: ', '.join(x) if isinstance(x, list) else str(x) if x else None
+    )
+
+    # Área Terapêutica
+    df['Área Terapêutica'] = df['Conditions'].apply(classificar_area_terapeutica)
+
+    # Colunas de ano
+    df['Ano_Inicio'] = df['Start Date'].dt.year.astype('Int64')
+    df = df[df['Ano_Inicio'] >= 2020]
+    df['Ano_Posted'] = df['First Posted'].dt.year.astype('Int64')
+
+    df = df.drop_duplicates(subset="NCT Number")
+
+    # NOVO: reduz memória convertendo colunas de baixa cardinalidade para
+    # 'category' — normalmente corta 50-90% do uso de RAM nessas colunas.
+    colunas_categoricas = [
+        'Sponsor', 'Funder Type', 'Study Type', 'Phases', 'Study Status',
+        'Intervention_type', 'Área Terapêutica'
+    ]
+    for c in colunas_categoricas:
+        if c in df.columns:
+            df[c] = df[c].astype('category')
+
+    return df
 
 
-def normalize_studies(studies):
-    """Normaliza a lista de estudos (JSON aninhado) para um DataFrame flat."""
-    rows = []
-    for study in studies:
-        row = {}
-        protocol = study.get("protocolSection", {})
+df_estudo = carregar_dados()
+if df_estudo.empty:
+    st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
+    st.stop()
 
-        id_mod = protocol.get("identificationModule", {})
-        row["protocolSection.identificationModule.nctId"] = id_mod.get("nctId")
-        row["protocolSection.identificationModule.officialTitle"] = id_mod.get("officialTitle")
+df_estudos = preparar_dados(df_estudo)
+del df_estudo  # libera a cópia crua assim que não é mais necessária
+# NOVO: sem .copy() aqui — os filtros de ano (linha ~289) sempre rodam e já
+# geram um DataFrame novo por conta própria; copiar antes disso só duplicava
+# a base inteira em memória sem necessidade.
+df_filtrado = df_estudos
 
-        status_mod = protocol.get("statusModule", {})
-        row["protocolSection.statusModule.overallStatus"] = status_mod.get("overallStatus")
-        row["protocolSection.statusModule.startDateStruct.date"] = (
-            status_mod.get("startDateStruct", {}) or {}
-        ).get("date")
-        row["protocolSection.statusModule.studyFirstPostDateStruct.date"] = (
-            status_mod.get("studyFirstPostDateStruct", {}) or {}
-        ).get("date")
-        row["protocolSection.statusModule.primaryCompletionDateStruct.date"] = (
-            status_mod.get("primaryCompletionDateStruct", {}) or {}
-        ).get("date")
+# ── Título e descrição ──────────────────────────────────────────────────────
+st.title("_ClinicalTrials.Gov_: Indicadores de Estudos em Andamento")
+st.subheader("Série Temporal: 2020 - Atual")
 
-        sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
-        lead = sponsor_mod.get("leadSponsor", {}) or {}
-        row["protocolSection.sponsorCollaboratorsModule.leadSponsor.name"] = lead.get("name")
-        row["protocolSection.sponsorCollaboratorsModule.leadSponsor.class"] = lead.get("class")
-        row["protocolSection.sponsorCollaboratorsModule.collaborators"] = str(
-            sponsor_mod.get("collaborators", [])
+multi = '''Este dashboard compila os estudos extraídos da API da plataforma ClinicalTrials.gov e que têm Status em andamento, sendo eles: :red[**Not Yet Recruiting e Recruiting**].  
+Elaboramos este material para auxilio no acesso a indicadores chave de pesquisa clínica mundial. Á esquerda, é possivel verificar diversas formas de filtro dos dados disponiveis e que podem ser usados de forma simultanêa. A série historica escolhida é a partir dos estudos iniciados (**Start Date**) a partir de **2020**.  
+Dúvidas ou problemas técnicos, por favor entre em contato com o **Time de BI-SVRI**.
+'''
+st.markdown(multi)
+
+# ── Sidebar: filtros ────────────────────────────────────────────────────────
+with st.sidebar:
+    def limpar_filtros():
+        st.session_state["filtro_sponsor"] = []
+        st.session_state["filtro_condicao"] = []
+        st.session_state["filtro_area_terapeutica"] = []
+        st.session_state["filtro_status"] = 'Selecionar Todos'
+        st.session_state["filtro_fase"] = 'Selecionar Todos'
+        st.session_state["filtro_funder"] = 'Selecionar Todos'
+        st.session_state["filtro_escopo"] = "🌍 Mundo"
+
+    st.button("🗑️ Limpar filtros", on_click=limpar_filtros)
+
+    patrocinadores = st.multiselect(
+        "**Patrocinadores**",
+        sorted(df_estudos["Sponsor"].dropna().unique()),
+        key="filtro_sponsor"
+    )
+
+    condicao = st.multiselect(
+        "**Comorbidade:**",
+        sorted(df_estudos['Conditions'].dropna().unique()),
+        key="filtro_condicao"
+    )
+
+    # NOVO: Filtro por Área Terapêutica
+    lista_areas = sorted({
+        area.strip()
+        for celula in df_estudos['Área Terapêutica'].dropna()
+        for area in celula.split(', ')
+    })
+    area_terapeutica = st.multiselect(
+        "**Área Terapêutica:**",
+        lista_areas,
+        key="filtro_area_terapeutica"
+    )
+
+    status_estudos = st.selectbox(
+        "**Status do Estudo**",
+        ['Selecionar Todos'] + sorted(df_estudos['Study Status'].dropna().unique()),
+        index=0,
+        key="filtro_status"
+    )
+
+    fase_estudo = st.selectbox(
+        "**Fases:**",
+        ['Selecionar Todos'] + sorted(df_estudos['Phases'].dropna().unique()),
+        index=0,
+        key="filtro_fase"
+    )
+
+    tipo_financiamento = st.selectbox(
+        "**Tipo de Financiamento:**",
+        ['Selecionar Todos'] + sorted(df_estudos['Funder Type'].dropna().unique()),
+        index=0,
+        key="filtro_funder"
+    )
+
+    ano_inicio_min, ano_inicio_max = st.sidebar.slider(
+        "**Ano de início do estudo:**",
+        min_value=int(df_estudos['Ano_Inicio'].min()),
+        max_value=int(df_estudos['Ano_Inicio'].max()),
+        value=(int(df_estudos['Ano_Inicio'].min()), int(df_estudos['Ano_Inicio'].max()))
+    )
+
+    ano_posted_min, ano_posted_max = st.sidebar.slider(
+        "**Ano de publicação:**",
+        min_value=int(df_estudos['Ano_Posted'].min()),
+        max_value=int(df_estudos['Ano_Posted'].max()),
+        value=(int(df_estudos['Ano_Posted'].min()), int(df_estudos['Ano_Posted'].max()))
+    )
+
+    if patrocinadores:
+        df_filtrado = df_filtrado[df_filtrado['Sponsor'].isin(patrocinadores)]
+
+    if status_estudos != 'Selecionar Todos':
+        df_filtrado = df_filtrado[df_filtrado['Study Status'] == status_estudos]
+
+    if condicao:
+        pattern = '|'.join(map(re.escape, condicao))
+        df_filtrado = df_filtrado[df_filtrado['Conditions'].str.contains(pattern, case=False, na=False)]
+
+    # NOVO: aplica filtro de Área Terapêutica
+    if area_terapeutica:
+        pattern = '|'.join(map(re.escape, area_terapeutica))
+        df_filtrado = df_filtrado[df_filtrado['Área Terapêutica'].str.contains(pattern, case=False, na=False)]
+
+    if fase_estudo != 'Selecionar Todos':
+        df_filtrado = df_filtrado[df_filtrado['Phases'] == fase_estudo]
+
+    if tipo_financiamento != 'Selecionar Todos':
+        df_filtrado = df_filtrado[df_filtrado['Funder Type'] == tipo_financiamento]
+
+    df_filtrado = df_filtrado[
+        (df_filtrado['Ano_Inicio'].between(ano_inicio_min, ano_inicio_max)) &
+        (df_filtrado['Ano_Posted'].between(ano_posted_min, ano_posted_max))
+    ]
+
+# ── Escopo Mundo / Brasil ───────────────────────────────────────────────────
+escopo = st.radio(
+    "**Estudos:**", ["🌍 Mundo", "🇧🇷 Brasil"],
+    horizontal=True, key="filtro_escopo"
+)
+
+if escopo == "🌍 Mundo":
+    df_escopo = df_filtrado
+else:
+    df_escopo = df_filtrado[df_filtrado["Locations"].str.contains(
+        r"\b(?:brazil|brasil)\b", case=False, na=False)]
+
+# ── Métricas ────────────────────────────────────────────────────────────────
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("**TOTAL DE ESTUDOS:**", df_escopo["NCT Number"].nunique())
+with col2:
+    total_brasil = df_escopo[df_escopo["Locations"].str.contains(
+        r"\b(?:brazil|brasil)\b", case=False, na=False)]["NCT Number"].nunique()
+    st.metric("**TOTAL DE ESTUDOS NO BRASIL:**", total_brasil)
+
+# ── Agregações para gráficos ────────────────────────────────────────────────
+df_top10 = (df_escopo.groupby('Sponsor')['NCT Number'].nunique()
+            .reset_index(name='num_estudos')
+            .sort_values('num_estudos', ascending=False).head(20))
+
+df_top10_comorbidade = (df_escopo.groupby('Conditions')['NCT Number'].nunique()
+                        .reset_index(name='num_estudos')
+                        .sort_values('num_estudos', ascending=False).head(20))
+
+df_contagem_fase = (df_escopo.groupby('Phases')['NCT Number'].nunique()
+                    .reset_index(name='num_estudos'))
+
+df_intervention = (df_escopo.groupby('Intervention_type')['NCT Number'].nunique()
+                   .reset_index(name='num_estudos')
+                   .sort_values('num_estudos', ascending=False))
+
+# ── NOVO: Linhas de tendência Mundo x Brasil ────────────────────────────────
+# Agora respeita o radio "Estudos: Mundo/Brasil" (e todos os demais filtros
+# da sidebar, já embutidos em df_escopo):
+#   • Escopo = Mundo  -> mostra as duas linhas (Mundo e Brasil) para comparar
+#   • Escopo = Brasil -> mostra somente a linha do Brasil, já filtrada
+def contagem_por_ano(df, coluna_data, nome_coluna_ano):
+    if df.empty:
+        return pd.DataFrame(columns=[nome_coluna_ano, 'num_estudos'])
+    tmp = df.dropna(subset=[coluna_data]).assign(
+        **{nome_coluna_ano: df[coluna_data].dt.year}
+    )
+    return (tmp.groupby(nome_coluna_ano)['NCT Number'].nunique()
+            .reset_index(name='num_estudos')
+            .sort_values(nome_coluna_ano))
+
+if escopo == "🌍 Mundo":
+    df_brasil_escopo = df_escopo[df_escopo['Locations'].str.contains(
+        r"\b(?:brazil|brasil)\b", case=False, na=False)]
+
+    df_tendencia_start = pd.concat([
+        contagem_por_ano(df_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Mundo'),
+        contagem_por_ano(df_brasil_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Brasil'),
+    ], ignore_index=True)
+    df_tendencia_posted = pd.concat([
+        contagem_por_ano(df_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Mundo'),
+        contagem_por_ano(df_brasil_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Brasil'),
+    ], ignore_index=True)
+    titulo_start = 'Estudos por Ano de Início — Mundo x Brasil'
+    titulo_posted = 'Estudos por Ano de Publicação — Mundo x Brasil'
+else:
+    df_tendencia_start = contagem_por_ano(df_escopo, 'Start Date', 'Ano_Start').assign(Escopo='Brasil')
+    df_tendencia_posted = contagem_por_ano(df_escopo, 'First Posted', 'Ano_Posted').assign(Escopo='Brasil')
+    titulo_start = 'Estudos por Ano de Início — Brasil'
+    titulo_posted = 'Estudos por Ano de Publicação — Brasil'
+
+# ── Gráficos ────────────────────────────────────────────────────────────────
+fig_start = px.line(
+    df_tendencia_start, x='Ano_Start', y='num_estudos', color='Escopo',
+    markers=True, text='num_estudos',
+    color_discrete_map={'Mundo': '#041266', 'Brasil': '#EC0E73'}
+)
+fig_start.update_traces(textposition='top center')
+fig_start.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8,
+    uniformtext_mode='hide', xaxis={'dtick': 1}, legend_title_text='')
+st.subheader(titulo_start)
+st.plotly_chart(fig_start, use_container_width=True)
+
+fig_posted = px.line(
+    df_tendencia_posted, x='Ano_Posted', y='num_estudos', color='Escopo',
+    markers=True, text='num_estudos',
+    color_discrete_map={'Mundo': '#041266', 'Brasil': '#EC0E73'}
+)
+fig_posted.update_traces(textposition='top center')
+fig_posted.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8,
+    uniformtext_mode='hide', xaxis={'dtick': 1}, legend_title_text='')
+st.subheader(titulo_posted)
+st.plotly_chart(fig_posted, use_container_width=True)
+
+ful1, ful2 = st.columns([1, 1])
+
+with ful1:
+    fig = px.bar(df_top10, x="num_estudos", y="Sponsor", color='Sponsor',
+                 color_discrete_sequence=color_sequence, orientation='h',
+                 text='num_estudos', height=400)
+    fig.update_traces(texttemplate='%{text:.0f}', textposition='outside',
+                      textfont=dict(size=18), cliponaxis=False, showlegend=False)
+    fig.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=6,
+                      uniformtext_mode='hide', yaxis=dict(tickfont=dict(size=10)),
+                      xaxis=dict(showticklabels=False))
+    st.subheader('Quantidade de estudos por empresa')
+    st.write('O gráfico abaixo mostra as empresas com maior número de estudos:')
+    st.plotly_chart(fig, use_container_width=True)
+
+    fig = px.bar(df_top10_comorbidade, x="num_estudos", y="Conditions", color='Conditions',
+                 color_discrete_sequence=color_sequence, text='num_estudos', height=400)
+    fig.update_traces(texttemplate='%{text:.0f}', textposition='outside',
+                      textfont=dict(size=18), cliponaxis=False, showlegend=False)
+    fig.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=6,
+                      uniformtext_mode='hide', yaxis=dict(tickfont=dict(size=10)),
+                      xaxis=dict(showticklabels=False))
+    st.subheader('Comorbidades com mais estudos')
+    st.write('O gráfico abaixo mostra as principais comorbidades com maiores números de estudos:')
+    st.plotly_chart(fig, use_container_width=True)
+
+with ful2:
+    fig = px.bar(df_contagem_fase, x="Phases", y="num_estudos", color='Phases',
+                 color_discrete_sequence=color_sequence, text='num_estudos', height=400)
+    fig.update_traces(texttemplate='%{text:.0f}', textposition='outside',
+                      cliponaxis=False, showlegend=False)
+    fig.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8,
+                      uniformtext_mode='hide', yaxis=dict(showticklabels=False))
+    st.subheader('Estudos por Fase')
+    st.write('O gráfico abaixo mostra a quantidade de estudos por fase:')
+    st.plotly_chart(fig, use_container_width=True)
+
+    fig = px.bar(df_intervention, y='num_estudos', x='Intervention_type', color='Intervention_type',
+                 color_discrete_sequence=color_sequence, text='num_estudos', height=400)
+    fig.update_traces(texttemplate='%{text:.0f}', textposition='outside',
+                      cliponaxis=False, showlegend=False)
+    fig.update_layout(xaxis_title='', yaxis_title='', uniformtext_minsize=8, uniformtext_mode='hide',
+                      xaxis={'categoryorder': 'category ascending'},
+                      yaxis=dict(showticklabels=False))
+    st.subheader('Tipo de Intervenção')
+    st.write('O gráfico abaixo mostra a quantidade de estudos por tipo de intervenção:')
+    st.plotly_chart(fig, use_container_width=True)
+
+# ── Modelagem da Tabela ──────────────────────────────────────────────────────
+cols_drop = [
+    c for c in [
+        'Locations', 'Collaborators', 'Intervention_armGroupLabels',
+        'Intervention_name', 'Intervention_description', 'Intervention_otherNames',
+        'Ano_Start', 'Ano_Posted', 'Ano_Inicio'
+    ] if c in df_escopo.columns
+]
+df_tabela = df_escopo.drop(columns=cols_drop)
+
+df_tabela = df_tabela.rename(columns={
+    'Intervention_type': 'Tipo de Intervenção',
+    'Study Title': 'Título do Estudo',
+    'Start Date': 'Início do Estudo',
+    'First Posted': 'Primeira Publicação',
+    'Completion Date': 'Conclusão do Estudo',
+    'Sponsor': 'Patrocinador',
+    'Funder Type': 'Tipo de Financiamento',
+    'Conditions': 'Comorbidades',
+    'Study Type': 'Tipo de Estudo',
+    'Enrollment': 'Recrutamento',
+    'Study Status': 'Status de Estudo',
+    'Phases': 'Fases'
+})
+
+cols_texto = df_tabela.select_dtypes(include=['object']).columns
+df_tabela[cols_texto] = df_tabela[cols_texto].fillna('Não informado')
+
+cols_data = df_tabela.select_dtypes(include=['datetime64[ns]']).columns
+for col in cols_data:
+    df_tabela[col] = df_tabela[col].dt.strftime('%d/%m/%Y').fillna('Não informado')
+
+df_tabela["NCT Number"] = "https://clinicaltrials.gov/study/" + df_tabela["NCT Number"].astype(str)
+
+st.dataframe(
+    df_tabela.head(1000),
+    column_config={
+        "NCT Number": st.column_config.LinkColumn(
+            "NCT Number",
+            display_text=r"https://clinicaltrials.gov/study/(.*)"
         )
+    }
+)
 
-        cond_mod = protocol.get("conditionsModule", {})
-        row["protocolSection.conditionsModule.conditions"] = str(
-            cond_mod.get("conditions", [])
-        )
-
-        design_mod = protocol.get("designModule", {})
-        row["protocolSection.designModule.studyType"] = design_mod.get("studyType")
-        row["protocolSection.designModule.phases"] = str(
-            design_mod.get("phases", [])
-        )
-        enroll = design_mod.get("enrollmentInfo", {}) or {}
-        row["protocolSection.designModule.enrollmentInfo.count"] = enroll.get("count")
-
-        arms_mod = protocol.get("armsInterventionsModule", {})
-        row["protocolSection.armsInterventionsModule.interventions"] = str(
-            arms_mod.get("interventions", [])
-        )
-
-        loc_mod = protocol.get("contactsLocationsModule", {})
-        locations = loc_mod.get("locations", [])
-        # Serializa lista de países para facilitar filtro no dashboard
-        countries = list({
-            loc.get("country", "") for loc in locations if loc.get("country")
-        })
-        row["protocolSection.contactsLocationsModule.locations"] = ", ".join(countries)
-
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-def main():
-    print("=" * 55)
-    print("Iniciando atualização dos dados do ClinicalTrials.gov")
-    print("=" * 55)
-
-    print(f"\nFiltro de status: {', '.join(STATUS_FILTER)}")
-    print("Buscando estudos na API...\n")
-
-    studies = fetch_all_studies()
-
-    if not studies:
-        print("\nNenhum estudo retornado pela API. Abortando.")
-        return
-
-    print(f"\nTotal de estudos brutos: {len(studies)}")
-    print("Normalizando dados...")
-
-    df = normalize_studies(studies)
-
-    # Otimizações
-    df = df.drop_duplicates(subset="protocolSection.identificationModule.nctId")
-    df["protocolSection.designModule.enrollmentInfo.count"] = pd.to_numeric(
-        df["protocolSection.designModule.enrollmentInfo.count"], errors="coerce"
-    ).astype("float32")
-
-    df.to_parquet(OUTPUT_FILE, index=False, compression="brotli")
-
-    size_mb = round(os.path.getsize(OUTPUT_FILE) / 1024**2, 2)
-    print(f"\nArquivo gerado: {OUTPUT_FILE}")
-    print(f"Linhas:         {len(df)}")
-    print(f"Tamanho:        {size_mb} MB")
-    print("\nConcluído com sucesso!")
-
-
-if __name__ == "__main__":
-    main()
+st.markdown("Desenvolvido por [Science Valley Research Institute](https://svriglobal.com/)")
