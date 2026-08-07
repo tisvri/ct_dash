@@ -40,66 +40,8 @@ def carregar_dados():
         return pd.read_parquet("studies.parquet", columns=list(map_columns.keys()))
     return pd.DataFrame()
 
-df_estudo = carregar_dados()
-if df_estudo.empty:
-    st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
-    st.stop()
-
-df_estudos = df_estudo.rename(columns=map_columns)
-df_estudos = df_estudos.reindex(columns=list(map_columns.values()))
-
-# ── Normaliza coluna de intervenção ─────────────────────────────────────────
-col = 'Intervention/ Intervention Type'
-
-def parse_cell(x):
-    try:
-        if pd.isna(x):
-            return {}
-        if isinstance(x, str):
-            x = ast.literal_eval(x)
-        if isinstance(x, list) and len(x) > 0:
-            return x[0]
-        return {}
-    except Exception:
-        return {}
-
-intervention_df = pd.json_normalize(
-    df_estudos[col].apply(parse_cell)
-).add_prefix('Intervention_')
-
-df_estudos = pd.concat(
-    [df_estudos.reset_index(drop=True), intervention_df.reset_index(drop=True)],
-    axis=1
-)
-
-# ── Tratamento de datas ─────────────────────────────────────────────────────
-for date_col in ['Start Date', 'First Posted', 'Completion Date']:
-    df_estudos[date_col] = pd.to_datetime(df_estudos[date_col], errors='coerce')
-
-# ── Tratamento de Conditions ────────────────────────────────────────────────
-df_estudos['Conditions'] = df_estudos['Conditions'].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
-)
-df_estudos['Conditions'] = df_estudos['Conditions'].apply(
-    lambda x: ', '.join(x) if isinstance(x, list) else x
-)
-df_estudos['Conditions'] = (
-    df_estudos['Conditions']
-    .astype(str)
-    .str.strip()
-    .str.replace(r'\s+', ' ', regex=True)
-    .str.title()
-)
-
-# ── Tratamento de Phases ────────────────────────────────────────────────────
-df_estudos['Phases'] = df_estudos['Phases'].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
-)
-df_estudos['Phases'] = df_estudos['Phases'].apply(
-    lambda x: ', '.join(x) if isinstance(x, list) else str(x) if x else None
-)
-
-#Classificação por Área Terapêutica 
+# ── Mapeamento de Área Terapêutica (fora da função cacheada, é estático) ────
+# 'Conditions' vem originalmente em inglês da API do ClinicalTrials.gov.
 AREA_TERAPEUTICA_KEYWORDS = {
     'Oncologia': ['cancer', 'tumor', 'tumour', 'carcinoma', 'lymphoma', 'leukemia',
                   'leukaemia', 'melanoma', 'sarcoma', 'neoplasm', 'oncolog', 'metastatic'],
@@ -144,15 +86,105 @@ def classificar_area_terapeutica(conditions_str):
         return 'Outras'
     return ', '.join(areas_encontradas)
 
-df_estudos['Área Terapêutica'] = df_estudos['Conditions'].apply(classificar_area_terapeutica)
 
-# ── Colunas de ano ──────────────────────────────────────────────────────────
-df_estudos['Ano_Inicio'] = df_estudos['Start Date'].dt.year.astype('Int64')
-df_estudos = df_estudos[df_estudos['Ano_Inicio'] >= 2020]
-df_estudos['Ano_Posted'] = df_estudos['First Posted'].dt.year.astype('Int64')
+# ── NOVO: todo o pipeline pesado agora é cacheado ───────────────────────────
+# Antes, esse tratamento (parse de listas, regex, classificação por
+# palavras-chave) rodava do ZERO a cada clique em qualquer filtro, já que o
+# Streamlit reexecuta o script inteiro a cada interação. Isso gerava picos de
+# memória e foi a causa mais provável do "resource limit" do Community Cloud.
+# Agora ele roda só uma vez (ou quando o cache expira / o parquet muda) e o
+# resultado fica guardado; cliques em filtro só filtram o DataFrame já pronto.
+@st.cache_data(ttl=CACHE_TTL_HORAS * 3600, show_spinner="Preparando dados...")
+def preparar_dados(df_estudo: pd.DataFrame) -> pd.DataFrame:
+    df = df_estudo.rename(columns=map_columns)
+    df = df.reindex(columns=list(map_columns.values()))
 
-df_estudos = df_estudos.drop_duplicates(subset="NCT Number")
-df_filtrado = df_estudos.copy()
+    # Normaliza coluna de intervenção
+    col_interv = 'Intervention/ Intervention Type'
+
+    def parse_cell(x):
+        try:
+            if pd.isna(x):
+                return {}
+            if isinstance(x, str):
+                x = ast.literal_eval(x)
+            if isinstance(x, list) and len(x) > 0:
+                return x[0]
+            return {}
+        except Exception:
+            return {}
+
+    intervention_df = pd.json_normalize(
+        df[col_interv].apply(parse_cell)
+    ).add_prefix('Intervention_')
+
+    df = pd.concat(
+        [df.reset_index(drop=True), intervention_df.reset_index(drop=True)],
+        axis=1
+    )
+    del intervention_df
+
+    # Datas
+    for date_col in ['Start Date', 'First Posted', 'Completion Date']:
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+
+    # Conditions
+    df['Conditions'] = df['Conditions'].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
+    )
+    df['Conditions'] = df['Conditions'].apply(
+        lambda x: ', '.join(x) if isinstance(x, list) else x
+    )
+    df['Conditions'] = (
+        df['Conditions']
+        .astype(str)
+        .str.strip()
+        .str.replace(r'\s+', ' ', regex=True)
+        .str.title()
+    )
+
+    # Phases
+    df['Phases'] = df['Phases'].apply(
+        lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith('[') else x
+    )
+    df['Phases'] = df['Phases'].apply(
+        lambda x: ', '.join(x) if isinstance(x, list) else str(x) if x else None
+    )
+
+    # Área Terapêutica
+    df['Área Terapêutica'] = df['Conditions'].apply(classificar_area_terapeutica)
+
+    # Colunas de ano
+    df['Ano_Inicio'] = df['Start Date'].dt.year.astype('Int64')
+    df = df[df['Ano_Inicio'] >= 2020]
+    df['Ano_Posted'] = df['First Posted'].dt.year.astype('Int64')
+
+    df = df.drop_duplicates(subset="NCT Number")
+
+    # NOVO: reduz memória convertendo colunas de baixa cardinalidade para
+    # 'category' — normalmente corta 50-90% do uso de RAM nessas colunas.
+    colunas_categoricas = [
+        'Sponsor', 'Funder Type', 'Study Type', 'Phases', 'Study Status',
+        'Intervention_type', 'Área Terapêutica'
+    ]
+    for c in colunas_categoricas:
+        if c in df.columns:
+            df[c] = df[c].astype('category')
+
+    return df
+
+
+df_estudo = carregar_dados()
+if df_estudo.empty:
+    st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
+    st.stop()
+
+df_estudos = preparar_dados(df_estudo)
+del df_estudo  # libera a cópia crua assim que não é mais necessária
+# NOVO: sem .copy() aqui — os filtros de ano (linha ~289) sempre rodam e já
+# geram um DataFrame novo por conta própria; copiar antes disso só duplicava
+# a base inteira em memória sem necessidade.
+df_filtrado = df_estudos
 
 # ── Título e descrição ──────────────────────────────────────────────────────
 st.title("_ClinicalTrials.Gov_: Indicadores de Estudos em Andamento")
@@ -189,7 +221,7 @@ with st.sidebar:
         key="filtro_condicao"
     )
 
-    #Filtro por Área Terapêutica
+    # NOVO: Filtro por Área Terapêutica
     lista_areas = sorted({
         area.strip()
         for celula in df_estudos['Área Terapêutica'].dropna()
@@ -246,7 +278,7 @@ with st.sidebar:
         pattern = '|'.join(map(re.escape, condicao))
         df_filtrado = df_filtrado[df_filtrado['Conditions'].str.contains(pattern, case=False, na=False)]
 
-    #Área Terapêutica
+    # NOVO: aplica filtro de Área Terapêutica
     if area_terapeutica:
         pattern = '|'.join(map(re.escape, area_terapeutica))
         df_filtrado = df_filtrado[df_filtrado['Área Terapêutica'].str.contains(pattern, case=False, na=False)]
@@ -269,10 +301,10 @@ escopo = st.radio(
 )
 
 if escopo == "🌍 Mundo":
-    df_escopo = df_filtrado.copy()
+    df_escopo = df_filtrado
 else:
     df_escopo = df_filtrado[df_filtrado["Locations"].str.contains(
-        r"\b(?:brazil|brasil)\b", case=False, na=False)].copy()
+        r"\b(?:brazil|brasil)\b", case=False, na=False)]
 
 # ── Métricas ────────────────────────────────────────────────────────────────
 col1, col2 = st.columns(2)
@@ -295,14 +327,15 @@ df_top10_comorbidade = (df_escopo.groupby('Conditions')['NCT Number'].nunique()
 df_contagem_fase = (df_escopo.groupby('Phases')['NCT Number'].nunique()
                     .reset_index(name='num_estudos'))
 
-df_escopo = df_escopo.copy()
-df_escopo['Ano_Start'] = df_escopo['Start Date'].dt.year
-df_escopo['Ano_Posted'] = df_escopo['First Posted'].dt.year
-
 df_intervention = (df_escopo.groupby('Intervention_type')['NCT Number'].nunique()
                    .reset_index(name='num_estudos')
                    .sort_values('num_estudos', ascending=False))
 
+# ── NOVO: Linhas de tendência Mundo x Brasil ────────────────────────────────
+# Agora respeita o radio "Estudos: Mundo/Brasil" (e todos os demais filtros
+# da sidebar, já embutidos em df_escopo):
+#   • Escopo = Mundo  -> mostra as duas linhas (Mundo e Brasil) para comparar
+#   • Escopo = Brasil -> mostra somente a linha do Brasil, já filtrada
 def contagem_por_ano(df, coluna_data, nome_coluna_ano):
     if df.empty:
         return pd.DataFrame(columns=[nome_coluna_ano, 'num_estudos'])
