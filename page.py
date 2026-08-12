@@ -207,6 +207,7 @@ Dúvidas ou problemas técnicos, por favor entre em contato com o **Time de BI-S
 '''
 st.markdown(multi)
 
+
 # ── Sidebar: filtros ────────────────────────────────────────────────────────
 with st.sidebar:
     def limpar_filtros():
