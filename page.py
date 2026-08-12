@@ -95,7 +95,9 @@ def classificar_area_terapeutica(conditions_str):
 # Agora ele roda só uma vez (ou quando o cache expira / o parquet muda) e o
 # resultado fica guardado; cliques em filtro só filtram o DataFrame já pronto.
 @st.cache_data(ttl=CACHE_TTL_HORAS * 3600, show_spinner="Preparando dados...")
-def preparar_dados(df_estudo: pd.DataFrame) -> pd.DataFrame:
+def preparar_dados(df_estudo: pd.DataFrame):
+    stats = {'total_bruto': len(df_estudo)}
+
     df = df_estudo.rename(columns=map_columns)
     df = df.reindex(columns=list(map_columns.values()))
 
@@ -154,14 +156,23 @@ def preparar_dados(df_estudo: pd.DataFrame) -> pd.DataFrame:
     # Área Terapêutica
     df['Área Terapêutica'] = df['Conditions'].apply(classificar_area_terapeutica)
 
-    # Colunas de ano
+    # NOVO: rastreia quantas linhas somem em cada etapa em vez de descartar
+    # em silêncio. 'Ano_Inicio' >= 2020, com dtype Int64 (nullable), trata
+    # datas ausentes (NA) como False no filtro booleano — ou seja, todo
+    # estudo sem 'Start Date' preenchido era removido sem nenhum aviso.
     df['Ano_Inicio'] = df['Start Date'].dt.year.astype('Int64')
+    stats['sem_start_date'] = int(df['Ano_Inicio'].isna().sum())
+    stats['start_date_antes_2020'] = int((df['Ano_Inicio'] < 2020).sum())
+
     df = df[df['Ano_Inicio'] >= 2020]
     df['Ano_Posted'] = df['First Posted'].dt.year.astype('Int64')
 
+    antes_dedup = len(df)
     df = df.drop_duplicates(subset="NCT Number")
+    stats['duplicados_removidos'] = antes_dedup - len(df)
+    stats['total_final'] = len(df)
 
-    # NOVO: reduz memória convertendo colunas de baixa cardinalidade para
+    # Reduz memória convertendo colunas de baixa cardinalidade para
     # 'category' — normalmente corta 50-90% do uso de RAM nessas colunas.
     colunas_categoricas = [
         'Sponsor', 'Funder Type', 'Study Type', 'Phases', 'Study Status',
@@ -171,7 +182,7 @@ def preparar_dados(df_estudo: pd.DataFrame) -> pd.DataFrame:
         if c in df.columns:
             df[c] = df[c].astype('category')
 
-    return df
+    return df, stats
 
 
 df_estudo = carregar_dados()
@@ -179,9 +190,9 @@ if df_estudo.empty:
     st.warning("Dados ainda não carregados. Aguarde a atualização automática.")
     st.stop()
 
-df_estudos = preparar_dados(df_estudo)
+df_estudos, stats_prep = preparar_dados(df_estudo)
 del df_estudo  # libera a cópia crua assim que não é mais necessária
-# NOVO: sem .copy() aqui — os filtros de ano (linha ~289) sempre rodam e já
+# sem .copy() aqui — os filtros de ano (linha ~289) sempre rodam e já
 # geram um DataFrame novo por conta própria; copiar antes disso só duplicava
 # a base inteira em memória sem necessidade.
 df_filtrado = df_estudos
@@ -471,14 +482,34 @@ for col in cols_data:
 
 df_tabela["NCT Number"] = "https://clinicaltrials.gov/study/" + df_tabela["NCT Number"].astype(str)
 
+# NOVO: removido o .head(1000) — esse era o principal motivo de "faltar
+# linhas": a tabela mostrava só as 1000 primeiras, mesmo quando o filtro
+# selecionado trazia muito mais estudos que isso (os cartões de métrica e os
+# gráficos já usavam o total completo, só a tabela ficava truncada).
+st.caption(
+    f"Mostrando {len(df_tabela):,} estudo(s) que atendem aos filtros selecionados."
+    .replace(',', '.')
+)
+
 st.dataframe(
-    df_tabela.head(1000),
+    df_tabela,
+    use_container_width=True,
     column_config={
         "NCT Number": st.column_config.LinkColumn(
             "NCT Number",
             display_text=r"https://clinicaltrials.gov/study/(.*)"
         )
     }
+)
+
+# NOVO: além da tabela na tela, oferece a base filtrada completa para
+# download — mais leve para o navegador do que renderizar dezenas de
+# milhares de linhas de uma vez, e garante acesso a "tudo" mesmo assim.
+st.download_button(
+    "⬇️ Baixar tabela completa filtrada (CSV)",
+    data=df_tabela.to_csv(index=False).encode('utf-8-sig'),
+    file_name="estudos_clinicaltrials_filtrado.csv",
+    mime="text/csv"
 )
 
 st.markdown("Desenvolvido por [Science Valley Research Institute](https://svriglobal.com/)")
