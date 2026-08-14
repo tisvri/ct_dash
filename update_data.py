@@ -6,29 +6,40 @@ import os
 # ── Configurações da API ────────────────────────────────────────────────────
 BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 
+# CORRIGIDO: o parâmetro 'fields' da API v2 espera os nomes curtos das peças
+# (ex: "NCTId", "BriefTitle"), não o caminho aninhado completo
+# ("protocolSection.identificationModule.nctId"). Os nomes longos continuam
+# sendo usados só localmente, para nomear as colunas do DataFrame final.
 FIELDS = [
-    "protocolSection.identificationModule.nctId",
-    "protocolSection.identificationModule.officialTitle",
-    "protocolSection.statusModule.startDateStruct.date",
-    "protocolSection.statusModule.studyFirstPostDateStruct.date",
-    "protocolSection.statusModule.primaryCompletionDateStruct.date",
-    "protocolSection.sponsorCollaboratorsModule.leadSponsor.name",
-    "protocolSection.sponsorCollaboratorsModule.leadSponsor.class",
-    "protocolSection.conditionsModule.conditions",
-    "protocolSection.designModule.studyType",
-    "protocolSection.designModule.phases",
-    "protocolSection.designModule.enrollmentInfo.count",
-    "protocolSection.armsInterventionsModule.interventions",
-    "protocolSection.contactsLocationsModule.locations",
-    "protocolSection.sponsorCollaboratorsModule.collaborators",
-    "protocolSection.statusModule.overallStatus",
+    "NCTId",
+    "OfficialTitle",
+    "StartDate",
+    "StudyFirstPostDate",
+    "PrimaryCompletionDate",
+    "LeadSponsorName",
+    "LeadSponsorClass",
+    "Condition",
+    "StudyType",
+    "Phase",
+    "EnrollmentCount",
+    "InterventionType",
+    "InterventionName",
+    "LocationCountry",
+    "Collaborator",
+    "OverallStatus",
 ]
 
 # Busca estudos com esses status
 STATUS_FILTER = ["NOT_YET_RECRUITING", "RECRUITING"]
 
+# NOVO: filtra direto na API por Start Date >= 2020, já que é isso que o
+# dashboard usa mesmo — evita baixar e depois descartar estudos antigos.
+DATA_INICIO_MINIMA = "2020-01-01"
+FILTRO_DATA = f"AREA[StartDate]RANGE[{DATA_INICIO_MINIMA},MAX]"
+
 PAGE_SIZE = 1000
 OUTPUT_FILE = "studies.parquet"
+MAX_TENTATIVAS_POR_PAGINA = 5  # NOVO: evita loop infinito de retry
 
 
 def fetch_all_studies():
@@ -37,7 +48,33 @@ def fetch_all_studies():
     next_page_token = None
     page = 1
 
-    status_query = "|".join(STATUS_FILTER)
+    # CORRIGIDO: filter.overallStatus é separado por VÍRGULA, não por pipe.
+    # Com "|" a API rejeita o parâmetro (400) porque o valor combinado não
+    # bate com nenhum status válido — e como isso não é erro de rede, o
+    # retry antigo ficava tentando pra sempre sem nunca dar certo.
+    status_query = ",".join(STATUS_FILTER)
+
+    # NOVO: pega o total esperado antes de paginar, pra podermos validar no
+    # final se batemos perto disso (e não aceitar silenciosamente um
+    # resultado truncado).
+    total_esperado = None
+    try:
+        resp_count = requests.get(
+            BASE_URL,
+            params={
+                "format": "json",
+                "filter.overallStatus": status_query,
+                "filter.advanced": FILTRO_DATA,
+                "pageSize": 1,
+                "countTotal": "true",
+            },
+            timeout=60,
+        )
+        resp_count.raise_for_status()
+        total_esperado = resp_count.json().get("totalCount")
+        print(f"  Total de estudos reportado pela API para esse filtro: {total_esperado}")
+    except requests.exceptions.RequestException as e:
+        print(f"  Aviso: não consegui obter o totalCount antecipadamente ({e}).")
 
     while True:
         print(f"  Buscando página {page}...")
@@ -47,20 +84,39 @@ def fetch_all_studies():
             "pageSize": PAGE_SIZE,
             "fields": ",".join(FIELDS),
             "filter.overallStatus": status_query,
+            "filter.advanced": FILTRO_DATA,
         }
 
         if next_page_token:
             params["pageToken"] = next_page_token
 
-        try:
-            response = requests.get(BASE_URL, params=params, timeout=60)
-            response.raise_for_status()
-            data = response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"  Erro na requisição (página {page}): {e}")
-            print("  Tentando novamente em 10 segundos...")
-            time.sleep(10)
-            continue
+        tentativa = 0
+        while True:
+            tentativa += 1
+            try:
+                response = requests.get(BASE_URL, params=params, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except requests.exceptions.RequestException as e:
+                # NOVO: distingue erro de parâmetro (4xx — não adianta tentar
+                # de novo) de erro transitório de rede/servidor (5xx/timeout).
+                status_code = getattr(e.response, "status_code", None)
+                if status_code is not None and 400 <= status_code < 500:
+                    print(f"  Erro {status_code} de parâmetro na página {page}: {e}")
+                    print(f"  Resposta da API: {getattr(e.response, 'text', '')[:500]}")
+                    raise SystemExit(
+                        "Abortando: erro de parâmetro não se resolve tentando de novo. "
+                        "Confira filter.overallStatus / fields."
+                    )
+                if tentativa >= MAX_TENTATIVAS_POR_PAGINA:
+                    raise SystemExit(
+                        f"Abortando: falharam {MAX_TENTATIVAS_POR_PAGINA} tentativas "
+                        f"seguidas na página {page} ({e})."
+                    )
+                print(f"  Erro na requisição (página {page}, tentativa {tentativa}): {e}")
+                print("  Tentando novamente em 10 segundos...")
+                time.sleep(10)
 
         studies = data.get("studies", [])
         all_studies.extend(studies)
@@ -74,7 +130,15 @@ def fetch_all_studies():
         page += 1
         time.sleep(0.3)  # Respeita rate limit da API
 
-    return all_studies
+    # NOVO: alerta (sem abortar) se ficamos muito abaixo do total esperado —
+    # normalmente sinal de paginação cortada por algum motivo.
+    if total_esperado is not None and len(all_studies) < 0.95 * total_esperado:
+        print(
+            f"  ⚠️  Aviso: coletamos {len(all_studies)} de {total_esperado} esperados "
+            f"({len(all_studies) / total_esperado:.1%}). Algo pode ter cortado a paginação."
+        )
+
+    return all_studies, total_esperado
 
 
 def normalize_studies(studies):
@@ -147,10 +211,10 @@ def main():
     print(f"\nFiltro de status: {', '.join(STATUS_FILTER)}")
     print("Buscando estudos na API...\n")
 
-    studies = fetch_all_studies()
+    studies, total_esperado = fetch_all_studies()
 
     if not studies:
-        print("\nNenhum estudo retornado pela API. Abortando.")
+        print("\nNenhum estudo retornado pela API. Abortando (parquet antigo mantido).")
         return
 
     print(f"\nTotal de estudos brutos: {len(studies)}")
@@ -163,6 +227,16 @@ def main():
     df["protocolSection.designModule.enrollmentInfo.count"] = pd.to_numeric(
         df["protocolSection.designModule.enrollmentInfo.count"], errors="coerce"
     ).astype("float32")
+
+    # NOVO: freio de segurança — não sobrescreve um parquet bom existente com
+    # um resultado suspeito de estar truncado.
+    if total_esperado is not None and len(df) < 0.90 * total_esperado:
+        print(
+            f"\n❌ Abortando gravação: só {len(df)} de {total_esperado} estudos "
+            f"esperados ({len(df) / total_esperado:.1%}). Mantendo o "
+            f"'{OUTPUT_FILE}' anterior para não perder dados."
+        )
+        return
 
     df.to_parquet(OUTPUT_FILE, index=False, compression="brotli")
 
